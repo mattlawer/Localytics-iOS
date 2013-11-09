@@ -9,25 +9,14 @@
 
 #import "LocalyticsSession.h"
 #import "LocalyticsSession+Private.h"
-#import "WebserviceConstants.h"
+#import "LocalyticsConstants.h"
 #import "LocalyticsUploader.h"
 #import "LocalyticsDatabase.h"
+#import "LocalyticsDatapointHelper.h"
+#import "LocalyticsUtil.h"
 
-#include <sys/types.h>
-#include <sys/sysctl.h>
-#include <mach/mach.h>
-#include <sys/socket.h>
-#include <net/if_dl.h>
-#include <ifaddrs.h>
 #include <CommonCrypto/CommonDigest.h>
 
-#pragma mark Constants
-#define PREFERENCES_KEY             @"_localytics_install_id" // The randomly generated ID for each install of the app
-#define LOCALYTICS_DIR              @".localytics"	// The directory in which the Localytics database is stored
-#define IFT_ETHER                   0x6             // Ethernet CSMACD
-#define PATH_TO_APT                 @"/private/var/lib/apt/"
-
-#define DEFAULT_BACKGROUND_SESSION_TIMEOUT 15   // Default value for how many seconds a session persists when App shifts to the background.
 
 // The singleton session object.
 static LocalyticsSession *_sharedLocalyticsSession = nil;
@@ -51,9 +40,7 @@ static LocalyticsSession *_sharedLocalyticsSession = nil;
 @synthesize sessionHasBeenOpen          = _sessionHasBeenOpen;
 @synthesize sessionNumber               = _sessionNumber;
 @synthesize enableHTTPS                 = _enableHTTPS;
-@synthesize loggingEnabled              = _loggingEnabled;
 @synthesize localyticsDelegate          = _localyticsDelegate;
-@synthesize facebookAttribution			= _facebookAttribution;
 @synthesize needsSessionStartActions    = _needsSessionStartActions;
 @synthesize needsFirstRunActions        = _needsFirstRunActions;
 @synthesize needsUpgradeActions         = _needsUpgradeActions;
@@ -70,22 +57,15 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 + (LocalyticsSession *)shared {
 	@synchronized(self) {
 		if (_sharedLocalyticsSession == nil) {
-			_sharedLocalyticsSession = [[self allocFactory] init];
+            _sharedLocalyticsSession = [[self alloc] init];
 		}
 	}
 	return _sharedLocalyticsSession;
 }
 
-// Return with retain count of 1 (transfer ownership)
-+ (id)allocFactory
-{
-	return [self alloc];
-}
-
 - (LocalyticsSession *)init
 {
 	if((self = [super init])) {
-		_loggingEnabled = NO;
 		_isSessionOpen  = NO;
 		_hasInitialized = NO;
 		_sessionTimeoutInterval = DEFAULT_BACKGROUND_SESSION_TIMEOUT;
@@ -153,8 +133,9 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 				
 				self.applicationKey = appKey;
 				self.hasInitialized = YES;
-				self.facebookAttribution =  [[[LocalyticsSession shared] db] facebookAttributionFromDb];
 				
+                [self updateFirstAdidIfNeeded];
+                
 				LocalyticsLog("Object Initialized.  Application's key is: %@", self.applicationKey);
 				
 				if (!NSClassFromString(@"ASIdentifierManager") && ([[[UIDevice currentDevice] systemVersion] floatValue] >= 6.0f))
@@ -175,6 +156,16 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 		
 		[appKey release];
 	});
+}
+
+- (BOOL)loggingEnabled
+{
+    return [LocalyticsUtil loggingEnabled];
+}
+
+- (void)setLoggingEnabled:(BOOL)loggingEnabled
+{
+    [LocalyticsUtil setLoggingEnabled:loggingEnabled];
 }
 
 - (void)startSession:(NSString *)appKey
@@ -517,6 +508,64 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 	LocalyticsLog("Setting Location");
 }
 
+- (void)setPushToken:(NSData *)pushToken
+{
+    dispatch_async(_queue, ^{
+		@try {
+            NSString *tokenString = @"";
+            if (pushToken && pushToken.length > 0)
+            {
+                tokenString = [[pushToken description] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"<>"]];
+                tokenString = [tokenString stringByReplacingOccurrencesOfString:@" " withString:@""];
+            }
+            
+            BOOL isDevBuild = [LocalyticsDatapointHelper isDevBuild];
+            
+			LocalyticsDatabase *db = [self db];
+			NSString *t = @"set_push_token";
+			BOOL success = [db beginTransaction:t];
+                        
+			if (success)
+            {
+                if (isDevBuild)
+                {
+                    success = [[self db] updateDevPushToken:tokenString];
+                    
+                    // Clear the prod token if it has been set
+                    if ([[self db] isPushTokenNull] == NO)
+                    {
+                        success = [[self db] updatePushToken:@""];
+                    }
+                }
+                else
+                {
+                    success = [[self db] updatePushToken:tokenString];
+                    
+                    // Clear the dev token if it has been set
+                    if ([[self db] isDevPushTokenNull] == NO)
+                    {
+                        success = [[self db] updateDevPushToken:@""];
+                    }                    
+                }                
+			}
+			
+			NSString *buildType = isDevBuild ? @"Development" : @"Production";
+            
+			if (success)
+            {
+				[db releaseTransaction:t];
+				LocalyticsLog("%@ push token updated to: %@", buildType, tokenString);
+			}
+            else
+            {
+				[db rollbackTransaction:t];
+				LocalyticsLog("Failed to update %@ push token.", buildType);
+			}
+		}
+		@catch (NSException * e) {}
+	});
+}
+
 - (void)setCustomDimension:(int)dimension value:(NSString *)value
 {
 	if(dimension < 0 || dimension > 9) {
@@ -578,6 +627,7 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 {
 	[self setValueForIdentifier:@"email" value:email];
 }
+
 
 - (void)upload
 {	
@@ -660,6 +710,19 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 - (void)onFirstRun {}
 
 - (void)onUpgrade {}
+
+- (void)updateFirstAdidIfNeeded
+{
+    if ([[self db] isFirstAdidNull])
+    {
+        NSString *advertisingIdentifier = [LocalyticsDatapointHelper advertisingIdentifier];
+        
+        if (advertisingIdentifier && ![advertisingIdentifier isEqualToString:@""])
+        {
+            [[self db] updateFirstAdid:advertisingIdentifier];
+        }
+    }
+}
 
 #pragma mark Private Methods
 
@@ -884,9 +947,12 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 	NSString *device_language = [english displayNameForKey:NSLocaleIdentifier value:device_locale];
 	NSString *locale_country = [english displayNameForKey:NSLocaleCountryCode value:[locale objectForKey:NSLocaleCountryCode]];
 	NSString *uuid = [self randomUUID];
-	NSString *device_uuid = [self uniqueDeviceIdentifier];
-	NSString *device_adid = [self advertisingIdentifier];
-	
+	NSString *device_uuid = nil;
+	NSString *device_first_adid = [[self db] firstAdid];
+	NSString *device_current_adid = [LocalyticsDatapointHelper advertisingIdentifier];
+    NSString *vendor_id = [LocalyticsDatapointHelper identifierForVendor];
+    NSString *bundle_id = [LocalyticsDatapointHelper bundleIdentifier];
+    
 	// Open first level - blob information
 	[headerString appendString:@"{"];
 	[headerString appendFormat:@"\"%@\":%d", PARAM_SEQUENCE_NUMBER, nextSequenceNumber];
@@ -902,7 +968,7 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 	//
 	[headerString appendString:[self formatAttributeWithName:PARAM_INSTALL_ID       value:[self installationId] ]];
 	[headerString appendString:[self formatAttributeWithName:PARAM_APP_KEY          value:self.applicationKey ]];
-	[headerString appendString:[self formatAttributeWithName:PARAM_APP_VERSION      value:[self appVersion]  ]];
+	[headerString appendString:[self formatAttributeWithName:PARAM_APP_VERSION      value:[LocalyticsDatapointHelper appVersion]  ]];
 	[headerString appendString:[self formatAttributeWithName:PARAM_LIBRARY_VERSION  value:[self libraryVersion]        ]];
 	
 	// >>  Device Information
@@ -910,26 +976,47 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 	if (device_uuid) {
 		[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_UUID_HASHED   value:[self hashString:device_uuid] ]];
 	}
-	if (device_adid) {
-		[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_ADID value:device_adid]];
+	if (device_first_adid) {
+		[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_ADID value:device_first_adid]];
 	}
+	if (device_current_adid) {
+		[headerString appendString:[self formatAttributeWithName:PARAM_CURRENT_ADID value:device_current_adid]];
+	}
+	if (vendor_id) {
+		[headerString appendString:[self formatAttributeWithName:PARAM_VENDOR_ID value:vendor_id]];
+	}
+	if (bundle_id) {
+		[headerString appendString:[self formatAttributeWithName:PARAM_BUNDLE_ID value:bundle_id]];
+	}
+	[headerString appendString:[NSString stringWithFormat:@",\"%@\":%@", PARAM_LIMIT_AD_TRACKING, [LocalyticsDatapointHelper advertisingTrackingEnabled] ? @"false" : @"true"]];
 	[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_PLATFORM      value:[thisDevice model]            ]];
 	[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_OS_VERSION    value:[thisDevice systemVersion]    ]];
-	[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_MODEL         value:[self deviceModel]         ]];
-	[headerString appendString:[NSString stringWithFormat:@",\"%@\":%lld", PARAM_DEVICE_MEMORY, (long long)[self availableMemory]  ]];
+	[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_MODEL         value:[LocalyticsDatapointHelper deviceModel]         ]];
+	[headerString appendString:[NSString stringWithFormat:@",\"%@\":%lld", PARAM_DEVICE_MEMORY, (long long)[LocalyticsDatapointHelper availableMemory]  ]];
 	[headerString appendString:[self formatAttributeWithName:PARAM_LOCALE_LANGUAGE   value:device_language]];
 	[headerString appendString:[self formatAttributeWithName:PARAM_LOCALE_COUNTRY    value:locale_country]];
 	[headerString appendString:[self formatAttributeWithName:PARAM_DEVICE_COUNTRY    value:[locale objectForKey:NSLocaleCountryCode]]];
-	[headerString appendString:[NSString stringWithFormat:@",\"%@\":%@", PARAM_JAILBROKEN, [self isDeviceJailbroken] ? @"true" : @"false"]];
-	[headerString appendString:[NSString stringWithFormat:@",\"%@\":%d", PARAM_TIMEZONE_OFFSET, [[NSTimeZone localTimeZone] secondsFromGMT]]];
-	
-	// >> Attribution information
-	//
-	if (self.facebookAttribution)
-	{
-		[headerString appendString:[self formatAttributeWithName:PARAM_FB_ATTRIBUTION value:self.facebookAttribution]];
-	}
-	
+	[headerString appendString:[NSString stringWithFormat:@",\"%@\":%@", PARAM_JAILBROKEN, [LocalyticsDatapointHelper isDeviceJailbroken] ? @"true" : @"false"]];
+	[headerString appendString:[NSString stringWithFormat:@",\"%@\":%ld", PARAM_TIMEZONE_OFFSET, (long)[[NSTimeZone localTimeZone] secondsFromGMT]]];
+
+    // >> Prod Push token
+    //
+    if (![[self db] isPushTokenNull])
+    {
+        NSString *pushToken = [[self db] pushToken];
+        if (!pushToken) pushToken = @"";        
+        [headerString appendString:[self formatAttributeWithName:PARAM_PUSH_TOKEN value:pushToken]];
+    }
+
+    // >> Dev Push token
+    //
+    if (![[self db] isDevPushTokenNull])
+    {
+        NSString *devPushToken = [[self db] devPushToken];
+        if (!devPushToken) devPushToken = @"";
+        [headerString appendString:[self formatAttributeWithName:PARAM_DEV_PUSH_TOKEN value:devPushToken]];
+    }
+    
 	//  Close second level - attributes
 	[headerString appendString:@"}"];
 	
@@ -1143,16 +1230,6 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 	});
 }
 
-/*!
- @method logMessage
- @abstract Logs a message with (localytics) prepended to it.
- @param message The message to log
- */
-+ (void)logMessage:(NSString *)message
-{
-	NSLog(@"\n(localytics) %@", message);
-}
-
 #pragma mark Datapoint Functions
 /*!
  @method customDimensions
@@ -1197,7 +1274,7 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 	NSData *stringBytes = [input dataUsingEncoding: NSUTF8StringEncoding];
 	unsigned char digest[CC_SHA1_DIGEST_LENGTH];
 	
-	if (CC_SHA1([stringBytes bytes], [stringBytes length], digest)) {
+	if (CC_SHA1([stringBytes bytes], (unsigned int)[stringBytes length], digest)) {
 		NSMutableString* hashedUUID = [NSMutableString stringWithCapacity:CC_SHA1_DIGEST_LENGTH * 2];
 		for(int i = 0; i < CC_SHA1_DIGEST_LENGTH; i++) {
 			[hashedUUID appendFormat:@"%02x", digest[i]];
@@ -1223,80 +1300,12 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 
 /*!
  @method installationId
- @abstract Looks in user preferences for an ID unique to this installation. If one is not
- found it checks if one happens to be in the database (carroyover from older version of the db)
- if not, it generates one.
+ @abstract Returns the install id from the database
  @return A string uniquely identifying this installation of this app
  */
 - (NSString *)installationId
 {
-    NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
-    NSString *installId = [prefs stringForKey:PREFERENCES_KEY];
-    
-    if(installId == nil)
-    {
-        LocalyticsLog("Install ID not found in preferences, checking DB");
-        installId = [[self db] installId];
-    }
-    
-    // If it hasn't been found yet, generate a new one.
-    if(installId == nil)
-    {
-        LocalyticsLog("Install ID not find one in database, generating a new one.");
-        installId = [self randomUUID];
-    }
-    
-    // Store the newly generated installId
-    [prefs setObject:installId forKey:PREFERENCES_KEY];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-    
-    return installId;
-}
-
-/*!
- @method uniqueDeviceIdentifier
- @abstract A unique device identifier is a hash value composed from various hardware identifiers such
- as the device’s serial number. It is guaranteed to be unique for every device but cannot
- be tied to a user account. [UIDevice Class Reference]
- @return An 1-way hashed identifier unique to this device.
- */
-- (NSString *)uniqueDeviceIdentifier
-{
-	return nil;
-}
-
-
-/*!
- @method advertisingIdentifier
- @abstract An alphanumeric string unique to each device, used for advertising only.
- From UIDevice documentation.
- 
- @return An identifier unique to this device.
- */
-- (NSString *)advertisingIdentifier
-{
-	NSString *adId = nil;
-	Class advertisingClass = NSClassFromString(@"ASIdentifierManager");
-	if (advertisingClass) {
-		SEL adidSelector = NSSelectorFromString(@"advertisingIdentifier");
-		adId = [[[advertisingClass performSelector:NSSelectorFromString(@"sharedManager")] performSelector:adidSelector] performSelector:NSSelectorFromString(@"UUIDString")];
-	}
-	return adId;
-}
-
-/*!
- @method appVersion
- @abstract Gets the pretty string for this application's version.
- @return The application's version as a pretty string
- */
-- (NSString *)appVersion
-{
-    NSString *version = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"];
-    
-    if (version == nil || [version isEqualToString:@""])
-        version = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleVersion"];
-    
-    return version;
+    return [[self db] installId];
 }
 
 - (NSString *)customDimension:(int)dimension
@@ -1321,83 +1330,6 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 - (NSTimeInterval)currentTimestamp
 {
 	return [[NSDate date] timeIntervalSince1970];
-}
-
-/*!
- @method isDeviceJailbroken
- @abstract checks for the existance of apt to determine whether the user is running any
- of the jailbroken app sources.
- @return whether or not the device is jailbroken.
- */
-- (BOOL)isDeviceJailbroken
-{
-	NSFileManager *sessionFileManager = [NSFileManager defaultManager];
-	return [sessionFileManager fileExistsAtPath:PATH_TO_APT];
-}
-
-/*!
- @method deviceModel
- @abstract Gets the device model string.
- @return a platform string identifying the device
- */
-- (NSString *)deviceModel
-{
-	char *buffer[256] = { 0 };
-	size_t size = sizeof(buffer);
-	sysctlbyname("hw.machine", buffer, &size, NULL, 0);
-	NSString *platform = [NSString stringWithCString:(const char*)buffer
-											encoding:NSUTF8StringEncoding];
-	return platform;
-}
-
-/*!
- @method modelSizeString
- @abstract Checks how much disk space is reported and uses that to determine the model
- @return A string identifying the model, e.g. 8GB, 16GB, etc
- */
-- (NSString *)modelSizeString
-{
-#if TARGET_IPHONE_SIMULATOR
-	return @"simulator";
-#endif
-	
-	// User partition
-	NSArray *path = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-	NSDictionary *stats = [[NSFileManager defaultManager] attributesOfFileSystemForPath:[path lastObject] error:nil];
-	uint64_t user = [[stats objectForKey:NSFileSystemSize] longLongValue];
-	
-	// System partition
-	path = NSSearchPathForDirectoriesInDomains(NSApplicationDirectory, NSSystemDomainMask, YES);
-	stats = [[NSFileManager defaultManager] attributesOfFileSystemForPath:[path lastObject] error:nil];
-	uint64_t system = [[stats objectForKey:NSFileSystemSize] longLongValue];
-	
-	// Add up and convert to gigabytes
-	// TODO: seem to be missing a system partiton or two...
-	NSInteger size = (user + system) >> 30;
-	
-	// Find nearest power of 2 (eg, 1,2,4,8,16,32,etc).  Over 64 and we return 0
-	for (NSInteger gig = 1; gig < 257; gig = gig << 1) {
-		if (size < gig)
-			return [NSString stringWithFormat:@"%dGB", gig];
-	}
-	return nil;
-}
-
-/*!
- @method availableMemory
- @abstract Reports how much memory is available
- @return A double containing the available free memory
- */
-- (double)availableMemory
-{
-	double result = NSNotFound;
-	
-	vm_statistics_data_t stats;
-	mach_msg_type_number_t count = HOST_VM_INFO_COUNT;
-	if (!host_statistics(mach_host_self(), HOST_VM_INFO, (host_info_t)&stats, &count))
-		result = vm_page_size * stats.free_count;
-	
-	return result;
 }
 
 /*!
@@ -1458,7 +1390,7 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 	return self;
 }
 
-- (unsigned)retainCount
+- (NSUInteger)retainCount
 {
 	// maximum value of an unsigned int - prevents additional retains for the class
 	return UINT_MAX;

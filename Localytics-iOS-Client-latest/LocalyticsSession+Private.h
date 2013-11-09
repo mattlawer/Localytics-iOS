@@ -12,9 +12,6 @@
 #import "LocalyticsDatabase.h"
 
 #define CLIENT_VERSION_PREFIX       @"iOS"
-#define LOCALYTICS_LOGGING_ENABLED [[LocalyticsSession shared] loggingEnabled]
-#define LocalyticsLog(message, ...)if([[LocalyticsSession shared] loggingEnabled]) \
-[LocalyticsSession logMessage:[NSString stringWithFormat:@"%s:\n + " message "\n\n", __PRETTY_FUNCTION__, ##__VA_ARGS__]]
 
 @interface LocalyticsSession()
 {
@@ -29,7 +26,6 @@
 	dispatch_group_t _criticalGroup;        // Group of blocks the must complete before backgrounding.
 	NSString *_sessionUUID;                 // Unique identifier for this session.
 	NSString *_applicationKey;					// Unique identifier for the instrumented application
-	NSString *_facebookAttribution;				// Facebook attribution cookie
 	NSTimeInterval _lastSessionStartTimestamp;  // The start time of the most recent session.
 	NSDate *_sessionResumeTime;                 // Time session was started or resumed.
 	NSDate *_sessionCloseTime;					// Time session was closed.
@@ -45,7 +41,6 @@
 }
 
 @property (nonatomic, retain) NSString *applicationKey;
-@property (nonatomic, retain) NSString *facebookAttribution;
 @property (nonatomic,readonly) dispatch_queue_t queue;
 @property (nonatomic,readonly) dispatch_group_t criticalGroup;
 @property (atomic) BOOL isSessionOpen;
@@ -65,7 +60,6 @@
 @property (nonatomic, assign) BOOL needsUpgradeActions;
 
 // Private methods.
-+ (id)allocFactory;
 - (void)reopenPreviousSession;
 - (void)addFlowEventWithName:(NSString *)name type:(NSString *)eventType;
 - (void)addScreenWithName:(NSString *)name;
@@ -84,6 +78,7 @@
 - (void)onStartSession;
 - (void)onFirstRun;
 - (void)onUpgrade;
+- (void)updateFirstAdidIfNeeded;
 
 // Datapoint methods.
 - (NSString *)customDimensions;
@@ -92,14 +87,7 @@
 - (NSString *)randomUUID;
 - (NSString *)escapeString:(NSString *)input;
 - (NSString *)installationId;
-- (NSString *)appVersion;
 - (NSTimeInterval)currentTimestamp;
-- (BOOL)isDeviceJailbroken;
-- (NSString *)deviceModel;
-- (NSString *)modelSizeString;
-- (double)availableMemory;
-- (NSString *)advertisingIdentifier;
-- (NSString *)uniqueDeviceIdentifier;
 
 
 

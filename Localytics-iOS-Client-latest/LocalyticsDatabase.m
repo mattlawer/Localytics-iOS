@@ -10,8 +10,9 @@
 
 #import "LocalyticsDatabase.h"
 #import "LocalyticsSession.h"
+#import "LocalyticsConstants.h"
+#import "LocalyticsDatapointHelper.h"
 
-#define LOCALYTICS_DIR              @".localytics"	// Name for the directory in which Localytics database is stored
 #define LOCALYTICS_DB               @"localytics"	// File name for the database (without extension)
 #define BUSY_TIMEOUT                30              // Maximum time SQlite will busy-wait for the database to unlock before returning SQLITE_BUSY
 
@@ -30,11 +31,17 @@
 - (void)upgradeToSchemaV11;
 - (void)upgradeToSchemaV12;
 - (void)upgradeToSchemaV13;
+- (void)upgradeToSchemaV14;
+- (void)upgradeToSchemaV15;
+- (void)upgradeToSchemaV16;
+- (void)upgradeToSchemaV17;
 - (void)moveDbToCaches;
 - (NSString *)randomUUID;
 @end
 
 @implementation LocalyticsDatabase
+
+@synthesize firstRun = _firstRun;
 
 + (NSString *)localyticsDirectoryPath {
 	NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
@@ -83,7 +90,7 @@
 				_firstRun = YES;
 			}
 		}
-		
+        
 		// Perform any Migrations if necessary
 		if ([self schemaVersion] < 2) {
 			[self upgradeToSchemaV2];
@@ -121,12 +128,18 @@
 		if ([self schemaVersion] < 13) {
 			[self upgradeToSchemaV13];
 		}
-		
-		// Perfrorm first run actions
-		if(_firstRun)
-		{
-			[self collectFacebookAttributionIfAvailable];
+		if ([self schemaVersion] < 14) {
+			[self upgradeToSchemaV14];
 		}
+		if ([self schemaVersion] < 15) {
+			[self upgradeToSchemaV15];
+		}
+		if ([self schemaVersion] < 16) {
+			[self upgradeToSchemaV16];
+		}
+		if ([self schemaVersion] < 17) {
+			[self upgradeToSchemaV17];
+        }
 	}
 	
 	return self;
@@ -699,7 +712,128 @@
 		sqlite3_exec(_databaseConnection, "ROLLBACK", NULL, NULL, NULL);
 	}
 }
+
+- (void)upgradeToSchemaV14
+{
+    int code = sqlite3_exec(_databaseConnection, "BEGIN", NULL, NULL, NULL);
 	
+	if (code == SQLITE_OK) {
+		code = sqlite3_exec(_databaseConnection,
+							"ALTER TABLE localytics_info ADD push_token CHAR(64)",
+							NULL, NULL, NULL);
+	}
+    
+    if (code == SQLITE_OK) {
+		code = sqlite3_exec(_databaseConnection,
+							"UPDATE localytics_info set schema_version = 14",
+							NULL, NULL, NULL);
+	}
+    
+    // Commit transaction.
+	if (code == SQLITE_OK || code == SQLITE_DONE) {
+		sqlite3_exec(_databaseConnection, "COMMIT", NULL, NULL, NULL);
+	} else {
+		sqlite3_exec(_databaseConnection, "ROLLBACK", NULL, NULL, NULL);
+	}
+}
+
+- (void)upgradeToSchemaV15
+{
+    int code = sqlite3_exec(_databaseConnection, "BEGIN", NULL, NULL, NULL);
+	
+	if (code == SQLITE_OK) {
+		code = sqlite3_exec(_databaseConnection,
+							"ALTER TABLE localytics_info ADD push_on BOOLEAN",
+							NULL, NULL, NULL);
+	}
+    
+    if (code == SQLITE_OK) {
+		code = sqlite3_exec(_databaseConnection,
+							"UPDATE localytics_info set schema_version = 15",
+							NULL, NULL, NULL);
+	}
+    
+    // Commit transaction.
+	if (code == SQLITE_OK || code == SQLITE_DONE) {
+		sqlite3_exec(_databaseConnection, "COMMIT", NULL, NULL, NULL);
+	} else {
+		sqlite3_exec(_databaseConnection, "ROLLBACK", NULL, NULL, NULL);
+	}
+}
+
+- (void)upgradeToSchemaV16
+{
+    int code = sqlite3_exec(_databaseConnection, "BEGIN", NULL, NULL, NULL);
+	
+	if (code == SQLITE_OK) {
+		code = sqlite3_exec(_databaseConnection,
+							"ALTER TABLE localytics_info ADD dev_push_token CHAR(64)",
+							NULL, NULL, NULL);
+	}
+    
+    if (code == SQLITE_OK) {
+		code = sqlite3_exec(_databaseConnection,
+							"UPDATE localytics_info set schema_version = 16",
+							NULL, NULL, NULL);
+	}
+    
+    // Commit transaction.
+	if (code == SQLITE_OK || code == SQLITE_DONE) {
+		sqlite3_exec(_databaseConnection, "COMMIT", NULL, NULL, NULL);
+	} else {
+		sqlite3_exec(_databaseConnection, "ROLLBACK", NULL, NULL, NULL);
+	}
+}
+
+- (void)upgradeToSchemaV17
+{
+    int code = sqlite3_exec(_databaseConnection, "BEGIN", NULL, NULL, NULL);
+	
+	if (code == SQLITE_OK) {
+		code = sqlite3_exec(_databaseConnection,
+							"ALTER TABLE localytics_info ADD first_adid CHAR(64)",
+							NULL, NULL, NULL);
+	}
+    
+	if (code == SQLITE_OK) {
+        // Ignore return code, because install_id may already exist for some users
+		sqlite3_exec(_databaseConnection,
+							"ALTER TABLE localytics_info ADD install_id CHAR(64)",
+							NULL, NULL, NULL);
+	}
+    
+    // Migrate or create the install id if needed
+    NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
+    NSString *installId = [prefs stringForKey:@"_localytics_install_id"];
+    
+    if (installId == nil || [installId isEqualToString:@""])
+    {
+        // Do we already have one in the DB?
+        installId = [self installId];
+        
+        if (installId == nil || [installId isEqualToString:@""])
+        {
+            // We need a new one
+            installId = [self randomUUID];
+        }
+    }
+        
+    if (code == SQLITE_OK) {
+        sqlite3_stmt *updateLocalyticsInfo;
+        sqlite3_prepare_v2(_databaseConnection, "UPDATE localytics_info set install_id = ?, schema_version = 17 ", -1, &updateLocalyticsInfo, NULL);
+        sqlite3_bind_text (updateLocalyticsInfo, 1, [installId UTF8String], -1, SQLITE_TRANSIENT);
+        code = sqlite3_step(updateLocalyticsInfo);
+        sqlite3_finalize(updateLocalyticsInfo);
+	}
+    
+    // Commit transaction.
+	if (code == SQLITE_OK || code == SQLITE_DONE) {
+		sqlite3_exec(_databaseConnection, "COMMIT", NULL, NULL, NULL);
+	} else {
+		sqlite3_exec(_databaseConnection, "ROLLBACK", NULL, NULL, NULL);
+	}
+}
+
 - (unsigned long long)databaseSize {
 	unsigned long long size = 0;
 	NSDictionary *fileAttributes = [[NSFileManager defaultManager]
@@ -805,6 +939,123 @@
 	int code = sqlite3_step(updateAppVersion);
 	sqlite3_finalize(updateAppVersion);
 	return (code == SQLITE_DONE);
+}
+
+- (BOOL)isPushTokenNull {
+	BOOL isPushTokenNull = NO;
+	
+	sqlite3_stmt *selectPushToken;
+	sqlite3_prepare_v2(_databaseConnection, "SELECT push_token FROM localytics_info", -1, &selectPushToken, NULL);
+	int code = sqlite3_step(selectPushToken);
+	if (code == SQLITE_ROW) {
+        isPushTokenNull = (SQLITE_NULL == sqlite3_column_type(selectPushToken, 0));
+	}
+	sqlite3_finalize(selectPushToken);
+	
+	return isPushTokenNull;
+}
+
+- (NSString *)pushToken {
+	NSString *pushToken = nil;
+	
+	sqlite3_stmt *selectPushToken;
+	sqlite3_prepare_v2(_databaseConnection, "SELECT push_token FROM localytics_info", -1, &selectPushToken, NULL);
+	int code = sqlite3_step(selectPushToken);
+	if (code == SQLITE_ROW) {
+		char* chars = (char *)sqlite3_column_text(selectPushToken, 0);
+		if(chars) pushToken = [NSString stringWithUTF8String:chars];
+	}
+	sqlite3_finalize(selectPushToken);
+	
+	return pushToken;
+}
+
+- (BOOL)updatePushToken:(NSString *)pushToken {
+	sqlite3_stmt *updatePushToken;
+	sqlite3_prepare_v2(_databaseConnection, "UPDATE localytics_info set push_token = ?", -1, &updatePushToken, NULL);
+	sqlite3_bind_text (updatePushToken, 1, [pushToken UTF8String], -1, SQLITE_TRANSIENT);
+	int code = sqlite3_step(updatePushToken);
+	sqlite3_finalize(updatePushToken);
+	return (code == SQLITE_DONE);
+}
+
+- (BOOL)isDevPushTokenNull {
+	BOOL isDevPushTokenNull = NO;
+	
+	sqlite3_stmt *selectDevPushToken;
+	sqlite3_prepare_v2(_databaseConnection, "SELECT dev_push_token FROM localytics_info", -1, &selectDevPushToken, NULL);
+	int code = sqlite3_step(selectDevPushToken);
+	if (code == SQLITE_ROW) {
+        isDevPushTokenNull = (SQLITE_NULL == sqlite3_column_type(selectDevPushToken, 0));
+	}
+	sqlite3_finalize(selectDevPushToken);
+	
+	return isDevPushTokenNull;
+}
+
+- (NSString *)devPushToken {
+	NSString *devPushToken = nil;
+	
+	sqlite3_stmt *selectDevPushToken;
+	sqlite3_prepare_v2(_databaseConnection, "SELECT dev_push_token FROM localytics_info", -1, &selectDevPushToken, NULL);
+	int code = sqlite3_step(selectDevPushToken);
+	if (code == SQLITE_ROW) {
+		char* chars = (char *)sqlite3_column_text(selectDevPushToken, 0);
+		if(chars) devPushToken = [NSString stringWithUTF8String:chars];
+	}
+	sqlite3_finalize(selectDevPushToken);
+	
+	return devPushToken;
+}
+
+- (BOOL)updateDevPushToken:(NSString *)devPushToken {
+	sqlite3_stmt *updateDevPushToken;
+	sqlite3_prepare_v2(_databaseConnection, "UPDATE localytics_info set dev_push_token = ?", -1, &updateDevPushToken, NULL);
+	sqlite3_bind_text (updateDevPushToken, 1, [devPushToken UTF8String], -1, SQLITE_TRANSIENT);
+	int code = sqlite3_step(updateDevPushToken);
+	sqlite3_finalize(updateDevPushToken);
+	return (code == SQLITE_DONE);
+}
+
+- (BOOL)isFirstAdidNull
+{
+    BOOL isFirstAdidNull = NO;
+	
+	sqlite3_stmt *selectFirstAdid;
+	sqlite3_prepare_v2(_databaseConnection, "SELECT first_adid FROM localytics_info", -1, &selectFirstAdid, NULL);
+	int code = sqlite3_step(selectFirstAdid);
+	if (code == SQLITE_ROW) {
+        isFirstAdidNull = (SQLITE_NULL == sqlite3_column_type(selectFirstAdid, 0));
+	}
+	sqlite3_finalize(selectFirstAdid);
+	
+	return isFirstAdidNull;
+}
+
+- (BOOL)updateFirstAdid:(NSString *)firstAdid
+{
+	sqlite3_stmt *updateFirstAdid;
+	sqlite3_prepare_v2(_databaseConnection, "UPDATE localytics_info set first_adid = ?", -1, &updateFirstAdid, NULL);
+	sqlite3_bind_text (updateFirstAdid, 1, [firstAdid UTF8String], -1, SQLITE_TRANSIENT);
+	int code = sqlite3_step(updateFirstAdid);
+	sqlite3_finalize(updateFirstAdid);
+	return (code == SQLITE_DONE);
+}
+
+- (NSString *)firstAdid;
+{
+	NSString *firstAdid = nil;
+	
+	sqlite3_stmt *selectFirstAdid;
+	sqlite3_prepare_v2(_databaseConnection, "SELECT first_adid FROM localytics_info", -1, &selectFirstAdid, NULL);
+	int code = sqlite3_step(selectFirstAdid);
+	if (code == SQLITE_ROW) {
+		char* chars = (char *)sqlite3_column_text(selectFirstAdid, 0);
+		if(chars) firstAdid = [NSString stringWithUTF8String:chars];
+	}
+	sqlite3_finalize(selectFirstAdid);
+	
+	return firstAdid;
 }
 
 - (NSString *)customDimension:(int)dimension {
@@ -1275,57 +1526,6 @@
 	return [[identifiers copy] autorelease];
 }
 
-- (BOOL)setFacebookAttribution:(NSString *)fbAttribution
-{
-	sqlite3_stmt *updateOptedOut;
-	sqlite3_prepare_v2(_databaseConnection, "UPDATE localytics_info SET fb_attribution = ?", -1, &updateOptedOut, NULL);
-	sqlite3_bind_text(updateOptedOut, 1, [fbAttribution UTF8String], -1, SQLITE_TRANSIENT);
-	int code = sqlite3_step(updateOptedOut);
-	sqlite3_finalize(updateOptedOut);
-	
-	return code == SQLITE_OK;
-}
-
-- (void)collectFacebookAttributionIfAvailable
-{
-	NSString *fbAttribution = [self facebookAttributionFromPasteboard];
-	if (fbAttribution)
-	{
-		[self setFacebookAttribution:fbAttribution];
-	}
-}
-
-- (NSString *)facebookAttributionFromPasteboard
-{
-	NSString *cookie = nil;
-	UIPasteboard *pasteBoard = [UIPasteboard
-								pasteboardWithName:@"fb_app_attribution"
-								create:NO];
-	
-	if (pasteBoard && [pasteBoard string])
-	{
-		cookie = [pasteBoard string];
-	}
-	
-	return cookie;
-}
-
-- (NSString *)facebookAttributionFromDb
-{
-	NSString *facebookAttribution = nil;
-	
-	sqlite3_stmt *selectFbAttribution;
-	sqlite3_prepare_v2(_databaseConnection, "SELECT fb_attribution FROM localytics_info", -1, &selectFbAttribution, NULL);
-	int code = sqlite3_step(selectFbAttribution);
-	if (code == SQLITE_ROW) {
-		char* chars = (char *)sqlite3_column_text(selectFbAttribution, 0);
-		if(chars) facebookAttribution = [NSString stringWithUTF8String:chars];
-	}
-	sqlite3_finalize(selectFbAttribution);
-	
-	return facebookAttribution;
-}
-
 #pragma mark - Safe NSDictionary value methods
 
 - (NSInteger)safeIntegerValueFromDictionary:(NSDictionary *)dict forKey:(NSString *)key
@@ -1387,7 +1587,7 @@
 	return self;
 }
 
-- (unsigned)retainCount {
+- (NSUInteger)retainCount {
 	// maximum value of an unsigned int - prevents additional retains for the class
 	return UINT_MAX;
 }

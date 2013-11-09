@@ -11,7 +11,8 @@
 #import "LocalyticsSession.h"
 #import "LocalyticsSession+Private.h"
 #import "LocalyticsDatabase.h"
-#import "WebserviceConstants.h"
+#import "LocalyticsConstants.h"
+#import "LocalyticsUtil.h"
 #import <zlib.h>
 
 #ifndef LOCALYTICS_URL
@@ -53,6 +54,12 @@ NSString * const kLocalyticsKeyResponseBody = @"localytics.key.responseBody";
 		return;
 	}
 	
+	if (localyticsApplicationKey == nil)
+	{
+		LocalyticsLog(@"Unable to upload session. Session never initialized?");
+		return;
+	}
+	
 	LocalyticsLog("Beginning upload process");
 	self.isUploading = true;
 	
@@ -89,8 +96,8 @@ NSString * const kLocalyticsKeyResponseBody = @"localytics.key.responseBody";
 		logString = [logString stringByReplacingOccurrencesOfString:@",\""
 														 withString:@",\n\t\""];
 		
-		LocalyticsLog("Uploading data (length: %u)\n%@",
-					  stringLength,
+		LocalyticsLog("Uploading data (length: %lu)\n%@",
+					  (unsigned long)stringLength,
 					  logString);
 	}
 	
@@ -126,18 +133,18 @@ NSString * const kLocalyticsKeyResponseBody = @"localytics.key.responseBody";
 				// On error, simply print the error and close the uploader.  We have to assume the data was not transmited
 				// so it is not deleted.  In the event that we accidently store data which was succesfully uploaded, the
 				// duplicate data will be ignored by the server when it is next uploaded.
-				LocalyticsLog("Error Uploading.  Code: %d,  Description: %@",
-							  [responseError code],
+				LocalyticsLog("Error Uploading.  Code: %ldd,  Description: %@",
+							  (long)[responseError code],
 							  [responseError localizedDescription]);
 			} else {
 				// Step 3
 				// While response status codes in the 5xx range leave upload rows intact, the default case is to delete.
 				if (responseStatusCode >= 500 && responseStatusCode < 600) {
-					LocalyticsLog("Upload failed with response status code %d", responseStatusCode);
+					LocalyticsLog("Upload failed with response status code %ld", (long)responseStatusCode);
 				} else {
 					// Because only one instance of the uploader can be running at a time it should not be possible for
 					// new upload rows to appear so there is no fear of deleting data which has not yet been uploaded.
-					LocalyticsLog("Upload completed successfully. Response code %d", responseStatusCode);
+					LocalyticsLog("Upload completed successfully. Response code %ld", (long)responseStatusCode);
 					[[[LocalyticsSession shared] db] deleteUploadedData];
 				}
 			}
@@ -172,7 +179,7 @@ NSString * const kLocalyticsKeyResponseBody = @"localytics.key.responseBody";
 	[submitRequest setValue:libraryVersion forHTTPHeaderField:HEADER_CLIENT_VERSION];
 	[submitRequest setValue:@"application/x-gzip" forHTTPHeaderField:@"Content-Type"];
 	[submitRequest setValue:@"gzip" forHTTPHeaderField:@"Content-Encoding"];
-	[submitRequest setValue:[NSString stringWithFormat:@"%d", requestData.length] forHTTPHeaderField:@"Content-Length"];
+	[submitRequest setValue:[NSString stringWithFormat:@"%lu", (unsigned long)requestData.length] forHTTPHeaderField:@"Content-Length"];
 	
 	[submitRequest setHTTPBody:requestData];
 	
@@ -203,7 +210,7 @@ NSString * const kLocalyticsKeyResponseBody = @"localytics.key.responseBody";
 	strm.opaque = Z_NULL;
 	strm.total_out = 0;
 	strm.next_in=(Bytef *)[data bytes];
-	strm.avail_in = [data length];
+	strm.avail_in = (unsigned int)[data length];
 	
 	// Compresssion Levels:
 	//   Z_NO_COMPRESSION
@@ -221,7 +228,7 @@ NSString * const kLocalyticsKeyResponseBody = @"localytics.key.responseBody";
 			[compressed increaseLengthBy: 16384];
 		
 		strm.next_out = [compressed mutableBytes] + strm.total_out;
-		strm.avail_out = [compressed length] - strm.total_out;
+		strm.avail_out = (unsigned int)([compressed length] - strm.total_out);
 		
 		deflate(&strm, Z_FINISH);
 		
@@ -253,7 +260,7 @@ NSString * const kLocalyticsKeyResponseBody = @"localytics.key.responseBody";
 	return self;
 }
 
-- (unsigned)retainCount {
+- (NSUInteger)retainCount {
 	// maximum value of an unsigned int - prevents additional retains for the class
 	return UINT_MAX;
 }

@@ -1,4 +1,4 @@
-//  WebserviceConstants.h
+//  LocalyticsConstants.h
 //  Copyright (C) 2013 Char Software Inc., DBA Localytics
 //
 //  This code is provided under the Localytics Modified BSD License.
@@ -6,6 +6,14 @@
 //  with this source code.
 //
 // Please visit www.localytics.com for more information.
+
+#pragma mark - Public constants
+
+#define DEFAULT_BACKGROUND_SESSION_TIMEOUT 15   // Default value for how many seconds a session persists when App shifts to the background.
+
+#pragma mark - Private constants
+
+#define LOCALYTICS_DIR              @".localytics"	// The directory in which the Localytics database is stored
 
 // The constants which are used to make up the JSON blob
 // To save disk space and network bandwidth all the keywords have been
@@ -51,7 +59,11 @@
 // PARAM_DATA_TYPE
 #define PARAM_APP_KEY               @"au"		// Localytics Application ID
 #define PARAM_DEVICE_UUID_HASHED    @"udid"     // Hashed version of the UUID
-#define PARAM_DEVICE_ADID           @"adid"     // Advertising Identifier
+#define PARAM_DEVICE_ADID           @"adid"     // First Advertising Identifier
+#define PARAM_CURRENT_ADID          @"cadid"    // Current Advertising Identifier
+#define PARAM_LIMIT_AD_TRACKING     @"lad"      // Limit Advertising Tracking
+#define PARAM_VENDOR_ID             @"vid"      // Vendor Identifier
+#define PARAM_BUNDLE_ID             @"bid"      // Bundle Identifier
 #define PARAM_INSTALL_ID            @"iu"       // Install ID
 #define PARAM_JAILBROKEN            @"j"        // Jailbroken (boolean)
 #define PARAM_LIBRARY_VERSION       @"lv"		// Client Version
@@ -68,7 +80,8 @@
 #define PARAM_IDENTIFIERS           @"ids"      // Identifiers (dictionary)
 #define PARAM_BIRTH_TIME            @"b"        // Birth time (Since epoch)
 #define PARAM_TIMEZONE_OFFSET		@"tz"       // Device offset from GMT in seconds
-#define PARAM_FB_ATTRIBUTION		@"fbat"		// Facebook attribution cookie
+#define PARAM_PUSH_TOKEN            @"push"		// Production push device token
+#define PARAM_DEV_PUSH_TOKEN        @"dpush"	// Development push device token
 
 /*****************
  * Session Start *

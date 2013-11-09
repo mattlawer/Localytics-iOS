@@ -54,6 +54,15 @@
 - (BOOL)setOptedOut:(BOOL)optOut;
 - (NSString *)appVersion;
 - (BOOL)updateAppVersion:(NSString *)appVersion;
+- (BOOL)isPushTokenNull;
+- (NSString *)pushToken;
+- (BOOL)updatePushToken:(NSString *)pushToken;
+- (BOOL)isDevPushTokenNull;
+- (NSString *)devPushToken;
+- (BOOL)updateDevPushToken:(NSString *)devPushToken;
+- (BOOL)isFirstAdidNull;
+- (BOOL)updateFirstAdid:(NSString *)firstAdid;
+- (NSString *)firstAdid;
 - (NSString *)installId;
 - (NSString *)appKey; // Most recent app key-- may not be that used to open the session.
 
@@ -64,10 +73,6 @@
 - (NSString *)valueForIdentifier:(NSString *)identifierName;
 - (BOOL)deleteIdentifer:(NSString *)identifierName;
 - (NSDictionary *)identifiers;
-
-- (BOOL)setFacebookAttribution:(NSString *)fbAttribution;
-- (NSString *)facebookAttributionFromDb;
-- (NSString *)facebookAttributionFromPasteboard;
 
 - (NSInteger)safeIntegerValueFromDictionary:(NSDictionary *)dict forKey:(NSString *)key;
 - (NSString *)safeStringValueFromDictionary:(NSDictionary *)dict forKey:(NSString *)key;
