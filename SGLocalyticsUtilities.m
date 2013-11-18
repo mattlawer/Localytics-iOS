@@ -16,21 +16,21 @@ void LLStartSession(NSString *key)
 #endif
 }
 
-void LLStopSession()
+void LLStopSession(void)
 {
 #if ANALYTICS_ENABLED
     [[LocalyticsSession sharedLocalyticsSession] close];
 #endif
 }
 
-void LLResumeSession()
+void LLResumeSession(void)
 {
 #if ANALYTICS_ENABLED
     [[LocalyticsSession sharedLocalyticsSession] resume];
 #endif
 }
 
-void LLUploadData()
+void LLUploadData(void)
 {
 #if ANALYTICS_ENABLED
     [[LocalyticsSession sharedLocalyticsSession] upload];

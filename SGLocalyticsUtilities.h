@@ -16,9 +16,9 @@
 #endif
 
 void LLStartSession(NSString *key);
-void LLStopSession();
-void LLResumeSession();
-void LLUploadData();
+void LLStopSession(void);
+void LLResumeSession(void);
+void LLUploadData(void);
 void LLTagEvent(NSString *name);
 void LLTagEventWithAttributes(NSString *name, NSDictionary *attributes);
 void LLTagScreen(NSString *name);

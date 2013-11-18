@@ -16,7 +16,7 @@
 #import "LocalyticsUtil.h"
 
 #include <CommonCrypto/CommonDigest.h>
-
+#import <tgmath.h>
 
 // The singleton session object.
 static LocalyticsSession *_sharedLocalyticsSession = nil;
@@ -260,7 +260,7 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 			// Update active session duration.
 			self.sessionActiveDuration += [self.sessionCloseTime timeIntervalSinceDate:self.sessionResumeTime];
 			
-			int sessionLength = (int)[[NSDate date] timeIntervalSince1970] - self.lastSessionStartTimestamp;
+			NSTimeInterval sessionLength = [[NSDate date] timeIntervalSince1970] - self.lastSessionStartTimestamp;
 			
 			
 			// Create the JSON representing the close blob
@@ -275,7 +275,7 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 			
 			// Avoid recording session lengths of users with unreasonable client times (usually caused by developers testing clock change attacks)
 			if(sessionLength > 0 && sessionLength < 400000) {
-				[closeEventString appendFormat:@",\"%@\":%d", PARAM_SESSION_TOTAL, sessionLength];
+				[closeEventString appendFormat:@",\"%@\":%f", PARAM_SESSION_TOTAL, sessionLength];
 			}
 			
 			// Open second level - screen flow
@@ -1159,7 +1159,7 @@ CLLocationCoordinate2D lastDeviceLocation = {0,0};
 - (NSString *)escapeString:(NSString *)input
 {
 	NSMutableString *escapedString = [NSMutableString stringWithCapacity:[input length] * 2];
-	for(int i = 0; i < [input length]; i++)
+	for(NSUInteger i = 0; i < [input length]; i++)
 	{
 		unichar currentChar = [input characterAtIndex:i];
 		switch(currentChar)
