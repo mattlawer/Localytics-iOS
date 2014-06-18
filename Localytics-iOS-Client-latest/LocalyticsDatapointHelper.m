@@ -201,7 +201,7 @@
 	Class advertisingClass = NSClassFromString(@"ASIdentifierManager");
 	if (advertisingClass) {
 		SEL trackingEnabledSelector = NSSelectorFromString(@"isAdvertisingTrackingEnabled");
-		enabled = [[advertisingClass performSelector:NSSelectorFromString(@"sharedManager")] performSelector:trackingEnabledSelector];
+		enabled = (BOOL)[[advertisingClass performSelector:NSSelectorFromString(@"sharedManager")] performSelector:trackingEnabledSelector];
 	}
 	return enabled;
 }
